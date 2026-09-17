@@ -143,17 +143,15 @@ WAR_QUOTES = [
 
 class ArchiveSelect(discord.ui.Select):
     def __init__(self, archives):
-        # Dynamically build the dropdown options from the database results
         options = [
-            discord.SelectOption(label=doc["_id"], description="Archived War Report", emoji="📜")
+            discord.SelectOption(label=str(doc["_id"]), description="Archived War Report", emoji="📜")
             for doc in archives
         ]
         super().__init__(placeholder="Choose a war to review...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        war_stamp = self.values[0]
-        # This is where the rich embed for the historical report will eventually go
-        await interaction.response.send_message(f"Displaying historical war data for: **{war_stamp}**", ephemeral=True)
+        selected_val = self.values[0]
+        await interaction.response.send_message(f"Displaying historical war data for: **{selected_val}**", ephemeral=True)
 
 class ArchiveSelectView(discord.ui.View):
     def __init__(self, archives):
@@ -171,11 +169,10 @@ class MainDashboardView(discord.ui.View):
             await interaction.response.send_message("There is no active ranked war currently logged in the database.", ephemeral=True)
             return
             
-        await interaction.response.send_message(f"Displaying current war interface for: **{active_war['_id']}**", ephemeral=True)
+        await interaction.response.send_message(f"Displaying current war interface for: **{str(active_war['_id'])}**", ephemeral=True)
 
     @discord.ui.button(label="War Archives", style=discord.ButtonStyle.secondary, custom_id="btn_archives", emoji="📚")
     async def archives_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Fetch the 25 most recent wars to populate the dropdown menu
         archives = await bot.archives_col.find().sort("end_time", -1).limit(25).to_list(length=25)
         if not archives:
             await interaction.response.send_message("The archives are empty. No historical wars found.", ephemeral=True)
