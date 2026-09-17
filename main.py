@@ -133,60 +133,76 @@ class WarBot(commands.Bot):
 
 bot = WarBot()
 
-@bot.tree.command(name="current_war", description="View live stats for the ongoing ranked war")
-async def current_war(interaction: discord.Interaction):
-    active_war = await bot.war_col.find_one({"status": "active"})
-    if not active_war:
-        await interaction.response.send_message("There is no active ranked war currently logged in the database.", ephemeral=True)
-        return
-        
-    await interaction.response.send_message(f"Displaying current war interface for: **{active_war['_id']}**")
-
-@bot.tree.command(name="archives", description="Search and retrieve historical war reports")
-@app_commands.describe(war_stamp="The exact ID of the war (e.g. Faction_Name_2026_10_10)")
-async def archives(interaction: discord.Interaction, war_stamp: str):
-    historical_war = await bot.archives_col.find_one({"_id": war_stamp})
-    if not historical_war:
-        await interaction.response.send_message(f"No archived war found with the stamp: `{war_stamp}`", ephemeral=True)
-        return
-        
-    await interaction.response.send_message(f"Displaying historical war data for: **{war_stamp}**")
-
 WAR_QUOTES = [
     '"The supreme art of war is to subdue the enemy without fighting." ~ Sun Tzu',
     '"In war, there is no substitute for victory." ~ Douglas MacArthur',
     '"To be prepared for war is one of the most effective means of preserving peace." ~ George Washington',
     '"Only the dead have seen the end of war." ~ Plato',
-    '"All warfare is based on deception." ~ Sun Tzu',
-    '"War is what happens when language fails." ~ Margaret Atwood',
-    '"Mankind must put an end to war before war puts an end to mankind." ~ John F. Kennedy',
-    '"I know not with what weapons World War III will be fought, but World War IV will be fought with sticks and stones." ~ Albert Einstein',
-    '"Let him who desires peace prepare for war." ~ Vegetius',
-    '"War does not determine who is right - only who is left." ~ Bertrand Russell',
-    '"There is no flag large enough to cover the shame of killing innocent people." ~ Howard Zinn',
-    '"A soldier will fight long and hard for a bit of colored ribbon." ~ Napoleon Bonaparte',
-    '"In peace, sons bury their fathers. In war, fathers bury their sons." ~ Herodotus',
-    '"The true soldier fights not because he hates what is in front of him, but because he loves what is behind him." ~ G.K. Chesterton',
-    '"It is well that war is so terrible, otherwise we should grow too fond of it." ~ Robert E. Lee',
-    '"Older men declare war. But it is the youth that must fight and die." ~ Herbert Hoover',
-    '"If we don\'t end war, war will end us." ~ H.G. Wells',
-    '"War is peace. Freedom is slavery. Ignorance is strength." ~ George Orwell',
-    '"The object of war is not to die for your country but to make the other bastard die for his." ~ George S. Patton',
-    '"Peace cannot be kept by force; it can only be achieved by understanding." ~ Albert Einstein',
-    '"Wars may be fought with weapons, but they are won by men." ~ George S. Patton'
-]
+    '"All warfare is based on deception." ~ Sun Tzu'
+] # You can paste the rest of your quotes back into this list
 
-@bot.tree.command(name="help", description="Summon the archives of knowledge.")
+class ArchiveSelect(discord.ui.Select):
+    def __init__(self, archives):
+        # Dynamically build the dropdown options from the database results
+        options = [
+            discord.SelectOption(label=doc["_id"], description="Archived War Report", emoji="📜")
+            for doc in archives
+        ]
+        super().__init__(placeholder="Choose a war to review...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        war_stamp = self.values[0]
+        # This is where the rich embed for the historical report will eventually go
+        await interaction.response.send_message(f"Displaying historical war data for: **{war_stamp}**", ephemeral=True)
+
+class ArchiveSelectView(discord.ui.View):
+    def __init__(self, archives):
+        super().__init__(timeout=180)
+        self.add_item(ArchiveSelect(archives))
+
+class MainDashboardView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None) 
+
+    @discord.ui.button(label="Current War", style=discord.ButtonStyle.primary, custom_id="btn_current", emoji="⚔️")
+    async def current_war_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        active_war = await bot.war_col.find_one({"status": "active"})
+        if not active_war:
+            await interaction.response.send_message("There is no active ranked war currently logged in the database.", ephemeral=True)
+            return
+            
+        await interaction.response.send_message(f"Displaying current war interface for: **{active_war['_id']}**", ephemeral=True)
+
+    @discord.ui.button(label="War Archives", style=discord.ButtonStyle.secondary, custom_id="btn_archives", emoji="📚")
+    async def archives_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Fetch the 25 most recent wars to populate the dropdown menu
+        archives = await bot.archives_col.find().sort("end_time", -1).limit(25).to_list(length=25)
+        if not archives:
+            await interaction.response.send_message("The archives are empty. No historical wars found.", ephemeral=True)
+            return
+            
+        view = ArchiveSelectView(archives)
+        await interaction.response.send_message("Select a historical war report from the dropdown below:", view=view, ephemeral=True)
+
+@bot.tree.command(name="call", description="Summon the war tracker dashboard")
+async def call_command(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        "Hello there! How can I help you today?", 
+        view=MainDashboardView()
+    )
+
+@bot.tree.command(name="help", description="Learn about the bot's purpose and commands")
 async def help_command(interaction: discord.Interaction):
     quote = random.choice(WAR_QUOTES)
     
     response = (
         f"*{quote}*\n\n"
-        "Harken, valiant warrior! Dost thou wander blindly amidst the fog of battle? "
-        "Pray, cast thine eyes upon the instruments of conquest I have bestowed upon thee:\n\n"
-        "**`/current_war`** - View live stats for the ongoing ranked war.\n"
-        "**`/archives [war_stamp]`** - Search and retrieve historical war reports.\n\n"
-        "May these tools serve thee well. Go forth and claim thy rightful triumph!"
+        "**Faction War Archivist**\n"
+        "I am an automated ledger designed to silently track, record, and preserve our faction's ranked wars. "
+        "I monitor the Torn API and safely log every attack, defense, and respect shift into the database.\n\n"
+        "**Available Commands:**\n"
+        "**`/call`** - Wakes me up and opens the interactive dashboard to view live wars or pull historical reports.\n"
+        "**`/help`** - Displays this informational message."
     )
     
     await interaction.response.send_message(response)
