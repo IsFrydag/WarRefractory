@@ -6,6 +6,7 @@ import motor.motor_asyncio
 from keep_alive import keep_alive
 import os
 from datetime import datetime
+import random
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -150,6 +151,45 @@ async def archives(interaction: discord.Interaction, war_stamp: str):
         return
         
     await interaction.response.send_message(f"Displaying historical war data for: **{war_stamp}**")
+
+WAR_QUOTES = [
+    '"The supreme art of war is to subdue the enemy without fighting." ~ Sun Tzu',
+    '"In war, there is no substitute for victory." ~ Douglas MacArthur',
+    '"To be prepared for war is one of the most effective means of preserving peace." ~ George Washington',
+    '"Only the dead have seen the end of war." ~ Plato',
+    '"All warfare is based on deception." ~ Sun Tzu',
+    '"War is what happens when language fails." ~ Margaret Atwood',
+    '"Mankind must put an end to war before war puts an end to mankind." ~ John F. Kennedy',
+    '"I know not with what weapons World War III will be fought, but World War IV will be fought with sticks and stones." ~ Albert Einstein',
+    '"Let him who desires peace prepare for war." ~ Vegetius',
+    '"War does not determine who is right - only who is left." ~ Bertrand Russell',
+    '"There is no flag large enough to cover the shame of killing innocent people." ~ Howard Zinn',
+    '"A soldier will fight long and hard for a bit of colored ribbon." ~ Napoleon Bonaparte',
+    '"In peace, sons bury their fathers. In war, fathers bury their sons." ~ Herodotus',
+    '"The true soldier fights not because he hates what is in front of him, but because he loves what is behind him." ~ G.K. Chesterton',
+    '"It is well that war is so terrible, otherwise we should grow too fond of it." ~ Robert E. Lee',
+    '"Older men declare war. But it is the youth that must fight and die." ~ Herbert Hoover',
+    '"If we don\'t end war, war will end us." ~ H.G. Wells',
+    '"War is peace. Freedom is slavery. Ignorance is strength." ~ George Orwell',
+    '"The object of war is not to die for your country but to make the other bastard die for his." ~ George S. Patton',
+    '"Peace cannot be kept by force; it can only be achieved by understanding." ~ Albert Einstein',
+    '"Wars may be fought with weapons, but they are won by men." ~ George S. Patton'
+]
+
+@bot.tree.command(name="help", description="Summon the archives of knowledge.")
+async def help_command(interaction: discord.Interaction):
+    quote = random.choice(WAR_QUOTES)
+    
+    response = (
+        f"*{quote}*\n\n"
+        "Harken, valiant warrior! Dost thou wander blindly amidst the fog of battle? "
+        "Pray, cast thine eyes upon the instruments of conquest I have bestowed upon thee:\n\n"
+        "**`/current_war`** - View live stats for the ongoing ranked war.\n"
+        "**`/archives [war_stamp]`** - Search and retrieve historical war reports.\n\n"
+        "May these tools serve thee well. Go forth and claim thy rightful triumph!"
+    )
+    
+    await interaction.response.send_message(response)
 
 keep_alive()
 bot.run(TOKEN)
