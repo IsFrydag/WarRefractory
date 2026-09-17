@@ -88,12 +88,14 @@ class WarBot(commands.Bot):
                         if not active_war_doc:
                             enemy_leader = "Unknown"
                             enemy_co = "Unknown"
+                            enemy_members = {}
                             enemy_url = f"https://api.torn.com/faction/{enemy_faction_id}?selections=basic&key={TORN_API_KEY}"
                             async with session.get(enemy_url) as enemy_response:
                                 if enemy_response.status == 200:
                                     enemy_data = await enemy_response.json()
                                     enemy_leader = str(enemy_data.get("leader", "Unknown"))
                                     enemy_co = str(enemy_data.get("co-leader", "Unknown"))
+                                    enemy_members = enemy_data.get("members", {})
 
                             war_memo = {
                                 "_id": war_stamp,
@@ -115,25 +117,31 @@ class WarBot(commands.Bot):
                             await self.war_col.insert_one(war_memo)
 
                             home_faction_doc = {
-                                "_id": f"Home_{war_stamp}",
-                                "date": start_date,
+                                "_id": f"{war_stamp}_2",
+                                "war_stamp": war_stamp,
+                                "status": "home",
                                 "name": data.get("name", "Unknown"),
-                                "id": my_faction_id,
-                                "members": home_member_count,
+                                "count": home_member_count,
                                 "leader": str(data.get("leader", "Unknown")), 
-                                "co": str(data.get("co-leader", "Unknown")),     
-                                "war": war_stamp
+                                "co": str(data.get("co-leader", "Unknown"))
                             }
+                            
+                            for i, (mem_id, mem_info) in enumerate(data.get("members", {}).items(), 1):
+                                home_faction_doc[f"member{i}"] = f"{mem_info.get('name')} - {mem_info.get('level')}"
+
                             enemy_faction_doc = {
-                                "_id": f"Enemy_{war_stamp}",
-                                "date": start_date,
+                                "_id": f"{war_stamp}_1",
+                                "war_stamp": war_stamp,
+                                "status": "enemy",
                                 "name": enemy_name,
-                                "id": enemy_faction_id,
-                                "members": enemy_member_count,
+                                "count": enemy_member_count,
                                 "leader": enemy_leader,
-                                "co": enemy_co,
-                                "war": war_stamp
+                                "co": enemy_co
                             }
+                            
+                            for i, (mem_id, mem_info) in enumerate(enemy_members.items(), 1):
+                                enemy_faction_doc[f"member{i}"] = f"{mem_info.get('name')} - {mem_info.get('level')}"
+
                             await self.factions_col.insert_many([home_faction_doc, enemy_faction_doc])
                             
                             members = data.get("members", {})
@@ -218,18 +226,38 @@ class FactionChoiceView(discord.ui.View):
 
     @discord.ui.button(label="Home Faction", style=discord.ButtonStyle.primary)
     async def home_fac_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        doc = await bot.factions_col.find_one({"_id": f"Home_{self.war_stamp}"})
+        doc = await bot.factions_col.find_one({"war_stamp": self.war_stamp, "status": "home"})
         if doc:
-            content = f"**Home Faction**\nName: {doc.get('name')}\nID: {doc.get('id')}\nMembers: {doc.get('members')}\nLeader: {doc.get('leader')}\nCo-Leader: {doc.get('co')}"
+            content = f"**Home Faction**\nName: {doc.get('name')}\nMembers: {doc.get('count')}\nLeader: {doc.get('leader')}\nCo-Leader: {doc.get('co')}\n\n**Roster:**\n"
+            roster = []
+            for i in range(1, doc.get('count', 0) + 1):
+                mem_key = f"member{i}"
+                if mem_key in doc:
+                    roster.append(doc[mem_key])
+            
+            roster_text = ", ".join(roster)
+            if len(roster_text) > 1700:
+                roster_text = roster_text[:1700] + " ... [Truncated]"
+            content += roster_text
         else:
             content = "Data not found."
         await interaction.response.edit_message(content=content, view=GenericBackView(self.war_stamp))
 
     @discord.ui.button(label="Enemy Faction", style=discord.ButtonStyle.danger)
     async def enemy_fac_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        doc = await bot.factions_col.find_one({"_id": f"Enemy_{self.war_stamp}"})
+        doc = await bot.factions_col.find_one({"war_stamp": self.war_stamp, "status": "enemy"})
         if doc:
-            content = f"**Enemy Faction**\nName: {doc.get('name')}\nID: {doc.get('id')}\nMembers: {doc.get('members')}\nLeader: {doc.get('leader')}\nCo-Leader: {doc.get('co')}"
+            content = f"**Enemy Faction**\nName: {doc.get('name')}\nMembers: {doc.get('count')}\nLeader: {doc.get('leader')}\nCo-Leader: {doc.get('co')}\n\n**Roster:**\n"
+            roster = []
+            for i in range(1, doc.get('count', 0) + 1):
+                mem_key = f"member{i}"
+                if mem_key in doc:
+                    roster.append(doc[mem_key])
+            
+            roster_text = ", ".join(roster)
+            if len(roster_text) > 1700:
+                roster_text = roster_text[:1700] + " ... [Truncated]"
+            content += roster_text
         else:
             content = "Data not found."
         await interaction.response.edit_message(content=content, view=GenericBackView(self.war_stamp))
