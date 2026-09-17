@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import aiohttp
 import motor.motor_asyncio
+from keep_alive import keep_alive
 import os
 from datetime import datetime
 from dotenv import load_dotenv
@@ -150,4 +151,5 @@ async def archives(interaction: discord.Interaction, war_stamp: str):
         
     await interaction.response.send_message(f"Displaying historical war data for: **{war_stamp}**")
 
+keep_alive()
 bot.run(TOKEN)

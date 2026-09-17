@@ -2,3 +2,4 @@ discord.py
 aiohttp
 motor
 python-dotenv
+Flask
