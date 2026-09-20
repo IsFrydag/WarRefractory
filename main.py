@@ -1,3 +1,4 @@
+# region Imports and Global Variables
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -38,6 +39,20 @@ WAR_QUOTES = [
     '"Peace cannot be kept by force; it can only be achieved by understanding." ~ Albert Einstein',
     '"Wars may be fought with weapons, but they are won by men." ~ George S. Patton'
 ]
+# endregion
+
+# region Active War
+id_mapping = {
+    '3390827': 470649318580158477,
+    '4160283': 945029469775757412,
+    '4154808': 1300383789348032522,
+    '1016908': 680241134756429890,
+    '2182598': 160199241959079938,
+    '2639261': 402969384542273536,
+    '3885932': 1444327086830391346,
+    '2968955': 1074956435127013426,
+    '2769112': 1475568866162774206
+}
 
 class WarBot(commands.Bot):
     def __init__(self):
@@ -49,6 +64,7 @@ class WarBot(commands.Bot):
         self.profiles_col = self.db["War_Profiles"]
         self.archives_col = self.db["Historical_Wars"]
         self.archived_profiles_col = self.db["Historical_Profiles"]
+        self.active_war_id = None
         
         self.enemy_profiles_col = self.db["Enemy_Profile"]
         self.archived_enemy_stats_col = self.db["Historical_Enemy_Stats"]
@@ -86,6 +102,19 @@ class WarBot(commands.Bot):
                         war_stamp = f"{enemy_name}_{start_date}"
                         
                         if not active_war_doc:
+                            # Triggers strictly once upon detecting a new war
+                            if self.active_war_id != war_id:
+                                self.active_war_id = war_id
+                                channel = self.get_channel(YOUR_ANNOUNCEMENT_CHANNEL_ID)
+                                if channel:
+                                    await channel.send(
+                                        f"⚔️ **WAR IS UPON US!** ⚔️\n"
+                                        f"Sharpen thy blades! The siege between **{data.get('name', 'Home Faction')}** and **{enemy_name.replace('_', ' ')}** commences <t:{start_timestamp}:R>!\n\n"
+                                        f"**The Muster Roll:**\n"
+                                        f"🛡️ **{data.get('name', 'Home Faction')}**: {home_member_count} warriors\n"
+                                        f"🩸 **{enemy_name.replace('_', ' ')}**: {enemy_member_count} warriors"
+                                    )
+
                             enemy_leader = "Unknown"
                             enemy_co = "Unknown"
                             enemy_members = {}
@@ -171,6 +200,9 @@ class WarBot(commands.Bot):
                                 {"_id": active_war_doc["_id"]},
                                 {"$set": {"home_score": home_score, "enemy_score": enemy_score}}
                             )
+                        
+                        # Call hospital timer loop while war is active
+                        await self.check_hospital_timers(data.get("members", {}), YOUR_ANNOUNCEMENT_CHANNEL_ID, id_mapping)
 
                     elif not ranked_wars and active_war_doc:
                         war_stamp = active_war_doc["_id"]
@@ -208,16 +240,272 @@ class WarBot(commands.Bot):
                             await self.archived_enemy_stats_col.insert_one(enemy_stat_doc)
                             await self.enemy_profiles_col.delete_many({})
 
-bot = WarBot()
+    async def check_hospital_timers(self, members_data, channel_id, id_mapping):
+        channel = self.get_channel(channel_id)
+        
+        for torn_id, data in members_data.items():
+            if data.get("status", {}).get("state") == "Hospital":
+                hosp_time = data.get("status", {}).get("until", 0) # TORN API natively uses UNIX timestamps (UTC)
+                current_time = datetime.now().timestamp() # Converts local time back to UTC epoch internally
+                time_left = hosp_time - current_time
+                
+                discord_id = id_mapping.get(str(torn_id))
+                
+                if 540 <= time_left <= 600:
+                    if discord_id:
+                        user = await self.fetch_user(discord_id)
+                        if user:
+                            await user.send(f"Hark! Thy time in the apothecary's ward draws to a close. Ten minutes remain ere thou art whole once more.")
+                
+                elif 240 <= time_left <= 300:
+                    if discord_id:
+                        user = await self.fetch_user(discord_id)
+                        if user:
+                            await user.send(f"Rouse thyself! But five minutes remain until thy wounds are bound. Prepare thy blade!")
+                    
+                    if channel:
+                        member_name = data.get('name', 'A warrior')
+                        await channel.send(f"Hear ye! Our comrade **{member_name}** shall bleed in but five minutes! To arms, brethren, and stand ready!")
 
+bot = WarBot()
+# endregion# region Active War
+id_mapping = {
+    '3390827': 470649318580158477,
+    '4160283': 945029469775757412,
+    '4154808': 1300383789348032522,
+    '1016908': 680241134756429890,
+    '2182598': 160199241959079938,
+    '2639261': 402969384542273536,
+    '3885932': 1444327086830391346,
+    '2968955': 1074956435127013426,
+    '2769112': 1475568866162774206
+}
+
+class WarBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=discord.Intents.default())
+        self.db_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
+        self.db = self.db_client["TornWarTracker"]
+        
+        self.war_col = self.db["War"]
+        self.profiles_col = self.db["War_Profiles"]
+        self.archives_col = self.db["Historical_Wars"]
+        self.archived_profiles_col = self.db["Historical_Profiles"]
+        self.active_war_id = None
+        
+        self.enemy_profiles_col = self.db["Enemy_Profile"]
+        self.archived_enemy_stats_col = self.db["Historical_Enemy_Stats"]
+        self.factions_col = self.db["Factions"]
+
+    async def setup_hook(self):
+        await self.tree.sync()
+        self.war_manager_loop.start()
+
+    @tasks.loop(seconds=60)
+    async def war_manager_loop(self):
+        async with aiohttp.ClientSession() as session:
+            url = f"https://api.torn.com/faction/?selections=basic,rankedwars,attacks&key={TORN_API_KEY}"
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    active_war_doc = await self.war_col.find_one({"status": "active"})
+                    ranked_wars = data.get("rankedwars", {})
+                    
+                    if ranked_wars:
+                        war_id = list(ranked_wars.keys())[0]
+                        war_data = ranked_wars[war_id]
+                        factions = war_data.get("factions", {})
+                        
+                        my_faction_id = str(data.get("ID"))
+                        enemy_faction_id = [fid for fid in factions.keys() if fid != my_faction_id][0]
+                        enemy_name = factions[enemy_faction_id].get("name", "Unknown").replace(" ", "_")
+                        
+                        home_member_count = len(factions.get(my_faction_id, {}).get("members", {}))
+                        enemy_member_count = len(factions.get(enemy_faction_id, {}).get("members", {}))
+                        
+                        start_timestamp = war_data.get("war", {}).get("start", 0)
+                        start_date = datetime.fromtimestamp(start_timestamp).strftime('%Y_%m_%d')
+                        war_stamp = f"{enemy_name}_{start_date}"
+                        
+                        if not active_war_doc:
+                            # Triggers strictly once upon detecting a new war
+                            if self.active_war_id != war_id:
+                                self.active_war_id = war_id
+                                channel = self.get_channel(YOUR_ANNOUNCEMENT_CHANNEL_ID)
+                                if channel:
+                                    await channel.send(
+                                        f"⚔️ **WAR IS UPON US!** ⚔️\n"
+                                        f"Sharpen thy blades! The siege between **{data.get('name', 'Home Faction')}** and **{enemy_name.replace('_', ' ')}** commences <t:{start_timestamp}:R>!\n\n"
+                                        f"**The Muster Roll:**\n"
+                                        f"🛡️ **{data.get('name', 'Home Faction')}**: {home_member_count} warriors\n"
+                                        f"🩸 **{enemy_name.replace('_', ' ')}**: {enemy_member_count} warriors"
+                                    )
+
+                            enemy_leader = "Unknown"
+                            enemy_co = "Unknown"
+                            enemy_members = {}
+                            enemy_url = f"https://api.torn.com/faction/{enemy_faction_id}?selections=basic&key={TORN_API_KEY}"
+                            async with session.get(enemy_url) as enemy_response:
+                                if enemy_response.status == 200:
+                                    enemy_data = await enemy_response.json()
+                                    enemy_leader = str(enemy_data.get("leader", "Unknown"))
+                                    enemy_co = str(enemy_data.get("co-leader", "Unknown"))
+                                    enemy_members = enemy_data.get("members", {})
+
+                            war_memo = {
+                                "_id": war_stamp,
+                                "status": "active",
+                                "enemy_name": enemy_name,
+                                "enemy_id": enemy_faction_id,
+                                "start_time": start_timestamp,
+                                "end_time": None,
+                                "home_member_count": home_member_count,
+                                "enemy_member_count": enemy_member_count,
+                                "rank_and_division": "Unknown",
+                                "home_score": 0,
+                                "enemy_score": 0,
+                                "winner": None,
+                                "total_attacks": 0,
+                                "mvp": None,
+                                "caches_earned": []
+                            }
+                            await self.war_col.insert_one(war_memo)
+
+                            home_faction_doc = {
+                                "_id": f"{war_stamp}_2",
+                                "war_stamp": war_stamp,
+                                "status": "home",
+                                "name": data.get("name", "Unknown"),
+                                "count": home_member_count,
+                                "leader": str(data.get("leader", "Unknown")), 
+                                "co": str(data.get("co-leader", "Unknown"))
+                            }
+                            
+                            for i, (mem_id, mem_info) in enumerate(data.get("members", {}).items(), 1):
+                                home_faction_doc[f"member{i}"] = f"{mem_info.get('name')} - {mem_info.get('level')}"
+
+                            enemy_faction_doc = {
+                                "_id": f"{war_stamp}_1",
+                                "war_stamp": war_stamp,
+                                "status": "enemy",
+                                "name": enemy_name,
+                                "count": enemy_member_count,
+                                "leader": enemy_leader,
+                                "co": enemy_co
+                            }
+                            
+                            for i, (mem_id, mem_info) in enumerate(enemy_members.items(), 1):
+                                enemy_faction_doc[f"member{i}"] = f"{mem_info.get('name')} - {mem_info.get('level')}"
+
+                            await self.factions_col.insert_many([home_faction_doc, enemy_faction_doc])
+                            
+                            members = data.get("members", {})
+                            for member_id, member_info in members.items():
+                                profile = {
+                                    "_id": f"{war_stamp}_{member_id}",
+                                    "war_stamp": war_stamp,
+                                    "player_id": member_id,
+                                    "name": member_info.get("name"),
+                                    "level": member_info.get("level"),
+                                    "attacks_won": 0,
+                                    "attacks_lost": 0,
+                                    "defends_won": 0,
+                                    "defends_lost": 0,
+                                    "rp_gained_inside": 0.0,
+                                    "rp_lost": 0.0,
+                                    "inside_hits": 0,
+                                    "outside_hits": 0,
+                                    "rp_gained_outside": 0.0
+                                }
+                                await self.profiles_col.insert_one(profile)
+                        
+                        else:
+                            home_score = factions.get(my_faction_id, {}).get("score", 0)
+                            enemy_score = factions.get(enemy_faction_id, {}).get("score", 0)
+                            await self.war_col.update_one(
+                                {"_id": active_war_doc["_id"]},
+                                {"$set": {"home_score": home_score, "enemy_score": enemy_score}}
+                            )
+                        
+                        # Call hospital timer loop while war is active
+                        await self.check_hospital_timers(data.get("members", {}), YOUR_ANNOUNCEMENT_CHANNEL_ID, id_mapping)
+
+                    elif not ranked_wars and active_war_doc:
+                        war_stamp = active_war_doc["_id"]
+                        
+                        await self.war_col.update_one(
+                            {"_id": war_stamp}, 
+                            {"$set": {
+                                "status": "archived", 
+                                "end_time": datetime.now().timestamp()
+                            }}
+                        )
+                        
+                        finished_war = await self.war_col.find_one({"_id": war_stamp})
+                        await self.archives_col.insert_one(finished_war)
+                        await self.war_col.delete_one({"_id": war_stamp})
+                        
+                        profiles_cursor = self.profiles_col.find({"war_stamp": war_stamp})
+                        async for profile in profiles_cursor:
+                            await self.archived_profiles_col.insert_one(profile)
+                        await self.profiles_col.delete_many({"war_stamp": war_stamp})
+
+                        enemy_profiles = await self.enemy_profiles_col.find({}).to_list(length=None)
+                        if enemy_profiles:
+                            total_enemy_hits = sum(ep.get("attack", 0) for ep in enemy_profiles)
+                            most_enemy_hits_p = max(enemy_profiles, key=lambda ep: ep.get("attack", 0), default={})
+                            most_enemy_rp_p = max(enemy_profiles, key=lambda ep: ep.get("rp", 0), default={})
+                            
+                            enemy_stat_doc = {
+                                "_id": war_stamp,
+                                "war_stamp": war_stamp,
+                                "total_hits": total_enemy_hits,
+                                "most_hits": most_enemy_hits_p.get("name", "N/A"),
+                                "most_rp": most_enemy_rp_p.get("name", "N/A")
+                            }
+                            await self.archived_enemy_stats_col.insert_one(enemy_stat_doc)
+                            await self.enemy_profiles_col.delete_many({})
+
+    async def check_hospital_timers(self, members_data, channel_id, id_mapping):
+        channel = self.get_channel(channel_id)
+        
+        for torn_id, data in members_data.items():
+            if data.get("status", {}).get("state") == "Hospital":
+                hosp_time = data.get("status", {}).get("until", 0) # TORN API natively uses UNIX timestamps (UTC)
+                current_time = datetime.now().timestamp() # Converts local time back to UTC epoch internally
+                time_left = hosp_time - current_time
+                
+                discord_id = id_mapping.get(str(torn_id))
+                
+                if 540 <= time_left <= 600:
+                    if discord_id:
+                        user = await self.fetch_user(discord_id)
+                        if user:
+                            await user.send(f"Hark! Thy time in the apothecary's ward draws to a close. Ten minutes remain ere thou art whole once more.")
+                
+                elif 240 <= time_left <= 300:
+                    if discord_id:
+                        user = await self.fetch_user(discord_id)
+                        if user:
+                            await user.send(f"Rouse thyself! But five minutes remain until thy wounds are bound. Prepare thy blade!")
+                    
+                    if channel:
+                        member_name = data.get('name', 'A warrior')
+                        await channel.send(f"Hear ye! Our comrade **{member_name}** shall bleed in but five minutes! To arms, brethren, and stand ready!")
+
+bot = WarBot()
+# endregion
+
+# region Archives
 class GenericBackView(discord.ui.View):
     def __init__(self, war_stamp):
         super().__init__(timeout=180)
         self.war_stamp = war_stamp
 
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Turn Back", style=discord.ButtonStyle.secondary)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content=f"**Details Menu:** {self.war_stamp}", view=ArchiveDetailsMenuView(self.war_stamp))
+        await interaction.response.edit_message(content=f"**Scroll of Details:** {self.war_stamp}", view=ArchiveDetailsMenuView(self.war_stamp))
 
 class FactionChoiceView(discord.ui.View):
     def __init__(self, war_stamp):
@@ -228,7 +516,7 @@ class FactionChoiceView(discord.ui.View):
     async def home_fac_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         doc = await bot.factions_col.find_one({"war_stamp": self.war_stamp, "status": "home"})
         if doc:
-            content = f"**Home Faction**\nName: {doc.get('name')}\nMembers: {doc.get('count')}\nLeader: {doc.get('leader')}\nCo-Leader: {doc.get('co')}\n\n**Roster:**\n"
+            content = f"**Home Faction**\nTitle: {doc.get('name')}\nBrethren: {doc.get('count')}\nLeader: {doc.get('leader')}\nCo-Leader: {doc.get('co')}\n\n**Roster:**\n"
             roster = []
             for i in range(1, doc.get('count', 0) + 1):
                 mem_key = f"member{i}"
@@ -240,14 +528,14 @@ class FactionChoiceView(discord.ui.View):
                 roster_text = roster_text[:1700] + " ... [Truncated]"
             content += roster_text
         else:
-            content = "Data not found."
+            content = "Alas, such records cannot be found."
         await interaction.response.edit_message(content=content, view=GenericBackView(self.war_stamp))
 
     @discord.ui.button(label="Enemy Faction", style=discord.ButtonStyle.danger)
     async def enemy_fac_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         doc = await bot.factions_col.find_one({"war_stamp": self.war_stamp, "status": "enemy"})
         if doc:
-            content = f"**Enemy Faction**\nName: {doc.get('name')}\nMembers: {doc.get('count')}\nLeader: {doc.get('leader')}\nCo-Leader: {doc.get('co')}\n\n**Roster:**\n"
+            content = f"**Enemy Faction**\nTitle: {doc.get('name')}\nBrethren: {doc.get('count')}\nLeader: {doc.get('leader')}\nCo-Leader: {doc.get('co')}\n\n**Roster:**\n"
             roster = []
             for i in range(1, doc.get('count', 0) + 1):
                 mem_key = f"member{i}"
@@ -259,12 +547,12 @@ class FactionChoiceView(discord.ui.View):
                 roster_text = roster_text[:1700] + " ... [Truncated]"
             content += roster_text
         else:
-            content = "Data not found."
+            content = "Alas, such records cannot be found."
         await interaction.response.edit_message(content=content, view=GenericBackView(self.war_stamp))
         
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Turn Back", style=discord.ButtonStyle.secondary)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content=f"**Details Menu:** {self.war_stamp}", view=ArchiveDetailsMenuView(self.war_stamp))
+        await interaction.response.edit_message(content=f"**Scroll of Details:** {self.war_stamp}", view=ArchiveDetailsMenuView(self.war_stamp))
 
 class ArchiveMemberSelect(discord.ui.Select):
     def __init__(self, profiles, war_stamp):
@@ -274,7 +562,7 @@ class ArchiveMemberSelect(discord.ui.Select):
             discord.SelectOption(label=p["name"], value=p["player_id"])
             for p in profiles[:25]
         ]
-        super().__init__(placeholder="Select a player...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Choose a warrior...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         player_id = self.values[0]
@@ -282,10 +570,10 @@ class ArchiveMemberSelect(discord.ui.Select):
         stats_text = (
             f"**Name:** {p.get('name')}\n"
             f"**Level:** {p.get('level')}\n"
-            f"**Attacks Won:** {p.get('attacks_won')}\n"
-            f"**Defends Won:** {p.get('defends_won')}\n"
-            f"**RP Gained (Inside):** {p.get('rp_gained_inside')}\n"
-            f"**Outside Hits:** {p.get('outside_hits')}"
+            f"**Victories in Attack:** {p.get('attacks_won')}\n"
+            f"**Victories in Defense:** {p.get('defends_won')}\n"
+            f"**Honor Gained (Inside):** {p.get('rp_gained_inside')}\n"
+            f"**Outside Strikes:** {p.get('outside_hits')}"
         )
         await interaction.response.edit_message(content=stats_text, view=GenericBackView(self.war_stamp))
 
@@ -295,30 +583,30 @@ class ArchiveMemberSelectView(discord.ui.View):
         self.war_stamp = war_stamp
         self.add_item(ArchiveMemberSelect(profiles, war_stamp))
 
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Turn Back", style=discord.ButtonStyle.secondary, row=1)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content=f"**Details Menu:** {self.war_stamp}", view=ArchiveDetailsMenuView(self.war_stamp))
+        await interaction.response.edit_message(content=f"**Scroll of Details:** {self.war_stamp}", view=ArchiveDetailsMenuView(self.war_stamp))
 
 class ArchiveDetailsMenuView(discord.ui.View):
     def __init__(self, war_stamp):
         super().__init__(timeout=180)
         self.war_stamp = war_stamp
 
-    @discord.ui.button(label="Members", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Brethren", style=discord.ButtonStyle.primary)
     async def members_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         profiles = await bot.archived_profiles_col.find({"war_stamp": self.war_stamp}).to_list(length=100)
         if not profiles:
-            await interaction.response.send_message("No members found.", ephemeral=True)
+            await interaction.response.send_message("Alas, no brethren found within.", ephemeral=True)
             return
-        await interaction.response.edit_message(content="Select a member:", view=ArchiveMemberSelectView(profiles, self.war_stamp))
+        await interaction.response.edit_message(content="Pray, select a warrior:", view=ArchiveMemberSelectView(profiles, self.war_stamp))
 
-    @discord.ui.button(label="Statistics", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Tallies", style=discord.ButtonStyle.primary)
     async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         profiles = await bot.archived_profiles_col.find({"war_stamp": self.war_stamp}).to_list(length=100)
         war_doc = await bot.archives_col.find_one({"_id": self.war_stamp})
         
         if not profiles:
-            await interaction.response.send_message("No data found.", ephemeral=True)
+            await interaction.response.send_message("Alas, no records exist here.", ephemeral=True)
             return
             
         total_hits = sum(p.get("inside_hits", 0) + p.get("outside_hits", 0) for p in profiles)
@@ -329,36 +617,36 @@ class ArchiveDetailsMenuView(discord.ui.View):
         ending_score = war_doc.get("ending_score", "Unknown") if war_doc else "Unknown"
 
         content = (
-            f"**Statistics for {self.war_stamp}**\n"
-            f"Ending Score: {ending_score}\n"
-            f"Total Hits Made: {total_hits}\n"
-            f"Most Hits: {most_hits_p.get('name', 'N/A')}\n"
-            f"Most RP: {most_rp_p.get('name', 'N/A')}\n"
-            f"Most Outside Hits: {most_outside_p.get('name', 'N/A')}"
+            f"**Tallies for {self.war_stamp}**\n"
+            f"Final Score: {ending_score}\n"
+            f"Total Strikes Landed: {total_hits}\n"
+            f"Most Strikes: {most_hits_p.get('name', 'N/A')}\n"
+            f"Most Honor Won: {most_rp_p.get('name', 'N/A')}\n"
+            f"Most Outside Strikes: {most_outside_p.get('name', 'N/A')}"
         )
         await interaction.response.edit_message(content=content, view=GenericBackView(self.war_stamp))
 
-    @discord.ui.button(label="Enemy Statistics", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Foe's Tallies", style=discord.ButtonStyle.primary)
     async def enemy_stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         enemy_stat = await bot.archived_enemy_stats_col.find_one({"war_stamp": self.war_stamp})
         if not enemy_stat:
-            await interaction.response.send_message("No enemy stats found for this war.", ephemeral=True)
+            await interaction.response.send_message("No tallies for the foe hath been found for this conflict.", ephemeral=True)
             return
         content = (
-            f"**Enemy Statistics**\n"
-            f"Total Hits: {enemy_stat.get('total_hits')}\n"
-            f"Most Hits: {enemy_stat.get('most_hits')}\n"
-            f"Most RP: {enemy_stat.get('most_rp')}"
+            f"**Foe's Tallies**\n"
+            f"Total Strikes: {enemy_stat.get('total_hits')}\n"
+            f"Most Strikes: {enemy_stat.get('most_hits')}\n"
+            f"Most Honor: {enemy_stat.get('most_rp')}"
         )
         await interaction.response.edit_message(content=content, view=GenericBackView(self.war_stamp))
 
-    @discord.ui.button(label="Faction Profiles", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Faction Scrolls", style=discord.ButtonStyle.primary)
     async def factions_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="Select faction profile to view:", view=FactionChoiceView(self.war_stamp))
+        await interaction.response.edit_message(content="Choose thy faction's scroll to inspect:", view=FactionChoiceView(self.war_stamp))
 
-    @discord.ui.button(label="Home", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Return", style=discord.ButtonStyle.danger)
     async def home_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="**Dashboard**", view=MainDashboardView())
+        await interaction.response.edit_message(content="**The Grand Ledger**", view=MainDashboardView())
 
 class WarReportView(discord.ui.View):
     def __init__(self, war_stamp, war_doc):
@@ -366,27 +654,27 @@ class WarReportView(discord.ui.View):
         self.war_stamp = war_stamp
         self.war_doc = war_doc
 
-    @discord.ui.button(label="Details", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Peruse Details", style=discord.ButtonStyle.primary)
     async def details_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content=f"**Details Menu:** {self.war_stamp}", view=ArchiveDetailsMenuView(self.war_stamp))
+        await interaction.response.edit_message(content=f"**Scroll of Details:** {self.war_stamp}", view=ArchiveDetailsMenuView(self.war_stamp))
         
-    @discord.ui.button(label="Home", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Return", style=discord.ButtonStyle.danger)
     async def home_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="**Dashboard**", view=MainDashboardView())
+        await interaction.response.edit_message(content="**The Grand Ledger**", view=MainDashboardView())
 
 class ArchiveSelect(discord.ui.Select):
     def __init__(self, archives):
         options = [
-            discord.SelectOption(label=str(doc["_id"]), description="Archived War Report", emoji="📜")
+            discord.SelectOption(label=str(doc["_id"]), description="Ancient War Scroll", emoji="📜")
             for doc in archives
         ]
-        super().__init__(placeholder="Choose a war to review...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Choose a conflict to peruse...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         selected_val = self.values[0]
         war_doc = await bot.archives_col.find_one({"_id": selected_val})
         
-        report_text = f"**War Report: {selected_val}**\nEnemy: {war_doc.get('enemy_name')}\nWinner: {war_doc.get('victor', 'N/A')}\nMVP: {war_doc.get('mvp', 'N/A')}"
+        report_text = f"**Chronicle of War: {selected_val}**\nFoe: {war_doc.get('enemy_name')}\nVictor: {war_doc.get('victor', 'N/A')}\nChampion (MVP): {war_doc.get('mvp', 'N/A')}"
         
         await interaction.response.edit_message(content=report_text, view=WarReportView(selected_val, war_doc))
 
@@ -395,56 +683,59 @@ class ArchiveSelectView(discord.ui.View):
         super().__init__(timeout=180)
         self.add_item(ArchiveSelect(archives))
         
-    @discord.ui.button(label="Home", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="Return", style=discord.ButtonStyle.danger, row=1)
     async def home_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="**Dashboard**", view=MainDashboardView())
+        await interaction.response.edit_message(content="**The Grand Ledger**", view=MainDashboardView())
+# endregion
 
+# region Dashboard and Bot Commands
 class MainDashboardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None) 
 
-    @discord.ui.button(label="Current War", style=discord.ButtonStyle.primary, custom_id="btn_current", emoji="⚔️")
+    @discord.ui.button(label="Present Conflict", style=discord.ButtonStyle.primary, custom_id="btn_current", emoji="⚔️")
     async def current_war_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         active_war = await bot.war_col.find_one({"status": "active"})
         if not active_war:
-            await interaction.response.send_message("There is no active ranked war currently logged in the database.", ephemeral=True)
+            await interaction.response.send_message("Alas, no active ranked conflict is presently etched within the database.", ephemeral=True)
             return
             
-        await interaction.response.send_message(f"Displaying current war interface for: **{str(active_war['_id'])}**", ephemeral=True)
+        await interaction.response.send_message(f"Unveiling the present conflict interface for: **{str(active_war['_id'])}**", ephemeral=True)
 
-    @discord.ui.button(label="War Archives", style=discord.ButtonStyle.secondary, custom_id="btn_archives", emoji="📚")
+    @discord.ui.button(label="Archives of War", style=discord.ButtonStyle.secondary, custom_id="btn_archives", emoji="📚")
     async def archives_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         archives = await bot.archives_col.find().sort("end_time", -1).limit(25).to_list(length=25)
         if not archives:
-            await interaction.response.send_message("The archives are empty. No historical wars found.", ephemeral=True)
+            await interaction.response.send_message("The grand archives lie barren. No historical conflicts hath been recorded.", ephemeral=True)
             return
             
         view = ArchiveSelectView(archives)
-        await interaction.response.edit_message(content="Select a historical war report from the dropdown below:", view=view)
+        await interaction.response.edit_message(content="Pray, choose a historical parchment from the dropdown below:", view=view)
 
-@bot.tree.command(name="call", description="Summon the war tracker dashboard")
+@bot.tree.command(name="call", description="Summon the grand ledger of war")
 async def call_command(interaction: discord.Interaction):
     await interaction.response.send_message(
-        "**Dashboard**\nHello there! How can I help you today?", 
+        "**The Grand Ledger**\nHail and well met! How might I serve thy query this day?", 
         view=MainDashboardView(),
         ephemeral=True
     )
 
-@bot.tree.command(name="help", description="Learn about the bot's purpose and commands")
+@bot.tree.command(name="help", description="Seek wisdom on the archivist's purpose and decrees")
 async def help_command(interaction: discord.Interaction):
     quote = random.choice(WAR_QUOTES)
     
     response = (
         f"*{quote}*\n\n"
         "**Faction War Archivist**\n"
-        "I am an automated ledger designed to silently track, record, and preserve our faction's ranked wars. "
-        "I monitor the Torn API and safely log every attack, defense, and respect shift into the database.\n\n"
-        "**Available Commands:**\n"
-        "**`/call`** - Wakes me up and opens the interactive dashboard to view live wars or pull historical reports.\n"
-        "**`/help`** - Displays this informational message."
+        "I am an automated ledger crafted to silently track, record, and preserve our faction's ranked conflicts. "
+        "I gaze upon the Torn API and safely chronicle every strike, parry, and shift in respect within the grand database.\n\n"
+        "**Available Decrees:**\n"
+        "**`/call`** - Wakens me to unfold the interactive ledger for live conflicts or to draw forth ancient scrolls.\n"
+        "**`/help`** - Unfurls this informative parchment."
     )
     
     await interaction.response.send_message(response)
 
 keep_alive()
 bot.run(TOKEN)
+# endregion
