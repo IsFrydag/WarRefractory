@@ -105,7 +105,7 @@ class WarBot(commands.Bot):
                             # Triggers strictly once upon detecting a new war
                             if self.active_war_id != war_id:
                                 self.active_war_id = war_id
-                                channel = self.get_channel(YOUR_ANNOUNCEMENT_CHANNEL_ID)
+                                channel = self.get_channel(1552388895872917554)
                                 if channel:
                                     await channel.send(
                                         f"⚔️ **WAR IS UPON US!** ⚔️\n"
