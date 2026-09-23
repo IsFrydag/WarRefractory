@@ -70,6 +70,8 @@ class WarBot(commands.Bot):
         self.archived_enemy_stats_col = self.db["Historical_Enemy_Stats"]
         self.factions_col = self.db["Factions"]
 
+        self.active_war_id = None
+
     async def setup_hook(self):
         await self.tree.sync()
         self.war_manager_loop.start()
@@ -100,12 +102,26 @@ class WarBot(commands.Bot):
                         enemy_faction_id = [fid for fid in factions.keys() if fid != my_faction_id][0]
                         enemy_name = factions[enemy_faction_id].get("name", "Unknown").replace(" ", "_")
                         
-                        home_member_count = len(factions.get(my_faction_id, {}).get("members", {}))
-                        enemy_member_count = len(factions.get(enemy_faction_id, {}).get("members", {}))
+                        home_member_count = len(data.get("members", {}))
                         
                         start_timestamp = war_data.get("war", {}).get("start", 0)
                         start_date = datetime.fromtimestamp(start_timestamp).strftime('%Y_%m_%d')
                         war_stamp = f"{enemy_name}_{start_date}"
+
+                        # Fetch enemy roster details FIRST
+                        enemy_leader = "Unknown"
+                        enemy_co = "Unknown"
+                        enemy_members = {}
+                        enemy_url = f"https://api.torn.com/faction/{enemy_faction_id}?selections=basic&key={TORN_API_KEY}"
+                        
+                        async with session.get(enemy_url) as enemy_response:
+                            if enemy_response.status == 200:
+                                enemy_data = await enemy_response.json()
+                                enemy_leader = str(enemy_data.get("leader", "Unknown"))
+                                enemy_co = str(enemy_data.get("co-leader", "Unknown"))
+                                enemy_members = enemy_data.get("members", {})
+                                
+                        enemy_member_count = len(enemy_members)
                         
                         if not active_war_doc:
                             if self.active_war_id != war_id:
