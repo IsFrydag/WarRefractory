@@ -85,9 +85,15 @@ class WarBot(commands.Bot):
                     active_war_doc = await self.war_col.find_one({"status": "active"})
                     ranked_wars = data.get("rankedwars", {})
                     
-                    if ranked_wars:
-                        war_id = list(ranked_wars.keys())[0]
-                        war_data = ranked_wars[war_id]
+                    war_id = None
+                    war_data = None
+                    for w_id, w_info in ranked_wars.items():
+                        if w_info.get("war", {}).get("end") == 0:
+                            war_id = w_id
+                            war_data = w_info
+                            break
+                    
+                    if war_data:
                         factions = war_data.get("factions", {})
                         
                         my_faction_id = str(data.get("ID"))
@@ -173,6 +179,7 @@ class WarBot(commands.Bot):
                             await self.factions_col.insert_many([home_faction_doc, enemy_faction_doc])
                             
                             members = data.get("members", {})
+                            home_profiles = []
                             for member_id, member_info in members.items():
                                 profile = {
                                     "_id": f"{war_stamp}_{member_id}",
@@ -190,7 +197,27 @@ class WarBot(commands.Bot):
                                     "outside_hits": 0,
                                     "rp_gained_outside": 0.0
                                 }
-                                await self.profiles_col.insert_one(profile)
+                                home_profiles.append(profile)
+                                
+                            if home_profiles:
+                                await self.profiles_col.insert_many(home_profiles)
+
+                            enemy_profiles = []
+                            for member_id, member_info in enemy_members.items():
+                                enemy_profile = {
+                                    "_id": f"{war_stamp}_{member_id}",
+                                    "war_stamp": war_stamp,
+                                    "player_id": member_id,
+                                    "name": member_info.get("name"),
+                                    "level": member_info.get("level"),
+                                    "attack": 0,
+                                    "defend": 0,
+                                    "rp": 0.0
+                                }
+                                enemy_profiles.append(enemy_profile)
+                                
+                            if enemy_profiles:
+                                await self.enemy_profiles_col.insert_many(enemy_profiles)
                         
                         else:
                             home_score = factions.get(my_faction_id, {}).get("score", 0)
@@ -222,11 +249,11 @@ class WarBot(commands.Bot):
                             await self.archived_profiles_col.insert_one(profile)
                         await self.profiles_col.delete_many({"war_stamp": war_stamp})
 
-                        enemy_profiles = await self.enemy_profiles_col.find({}).to_list(length=None)
-                        if enemy_profiles:
-                            total_enemy_hits = sum(ep.get("attack", 0) for ep in enemy_profiles)
-                            most_enemy_hits_p = max(enemy_profiles, key=lambda ep: ep.get("attack", 0), default={})
-                            most_enemy_rp_p = max(enemy_profiles, key=lambda ep: ep.get("rp", 0), default={})
+                        enemy_profiles_db = await self.enemy_profiles_col.find({}).to_list(length=None)
+                        if enemy_profiles_db:
+                            total_enemy_hits = sum(ep.get("attack", 0) for ep in enemy_profiles_db)
+                            most_enemy_hits_p = max(enemy_profiles_db, key=lambda ep: ep.get("attack", 0), default={})
+                            most_enemy_rp_p = max(enemy_profiles_db, key=lambda ep: ep.get("rp", 0), default={})
                             
                             enemy_stat_doc = {
                                 "_id": war_stamp,
