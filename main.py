@@ -69,6 +69,7 @@ class WarBot(commands.Bot):
         self.enemy_profiles_col = self.db["Enemy_Profile"]
         self.archived_enemy_stats_col = self.db["Historical_Enemy_Stats"]
         self.factions_col = self.db["Factions"]
+        self.hosp_notified = {}
 
         self.active_war_id = None
 
@@ -282,31 +283,46 @@ class WarBot(commands.Bot):
                             await self.enemy_profiles_col.delete_many({})
 
     async def check_hospital_timers(self, members_data, channel_id, id_mapping):
-        channel = self.get_channel(channel_id)
+        import time
+        current_time = time.time()
         
-        for torn_id, data in members_data.items():
-            if data.get("status", {}).get("state") == "Hospital":
-                hosp_time = data.get("status", {}).get("until", 0) 
-                current_time = datetime.now().timestamp() 
-                time_left = hosp_time - current_time
+        for member_id, member_info in members_data.items():
+            status = member_info.get("status", {})
+            state = status.get("state", "")
+            
+            if state == "Hospital":
+                until = status.get("until", 0)
+                time_left = until - current_time
                 
-                discord_id = id_mapping.get(str(torn_id))
-                
-                if 540 <= time_left <= 600:
-                    if discord_id:
-                        user = await self.fetch_user(discord_id)
-                        if user:
-                            await user.send(f"Hark! Thy time in the apothecary's ward draws to a close. Ten minutes remain ere thou art whole once more.")
-                
-                elif 240 <= time_left <= 300:
-                    if discord_id:
-                        user = await self.fetch_user(discord_id)
-                        if user:
-                            await user.send(f"Rouse thyself! But five minutes remain until thy wounds are bound. Prepare thy blade!")
+                if member_id not in self.hosp_notified:
+                    self.hosp_notified[member_id] = {"10m": False, "5m": False}
                     
-                    if channel:
-                        member_name = data.get('name', 'A warrior')
-                        await channel.send(f"Hear ye! Our comrade **{member_name}** shall bleed in but five minutes! To arms, brethren, and stand ready!")
+                discord_id = id_mapping.get(int(member_id)) or id_mapping.get(str(member_id))
+                
+                if 0 < time_left <= 600 and not self.hosp_notified[member_id]["10m"]:
+                    self.hosp_notified[member_id]["10m"] = True
+                    if discord_id:
+                        user = self.get_user(discord_id)
+                        if not user:
+                            try:
+                                user = await self.fetch_user(discord_id)
+                            except:
+                                pass
+                        if user:
+                            try:
+                                await user.send("Hold fast, warrior! Thy wounds are nearly bound. Thou hast but 10 minutes until thy return to the battlefield.")
+                            except:
+                                pass
+                                
+                if 0 < time_left <= 300 and not self.hosp_notified[member_id]["5m"]:
+                    self.hosp_notified[member_id]["5m"] = True
+                    channel = self.get_channel(channel_id)
+                    if channel and discord_id:
+                        await channel.send(f"🚨 Hear ye! <@{discord_id}> is about to bleed! Stand ready!")
+                        
+            else:
+                if member_id in self.hosp_notified:
+                    del self.hosp_notified[member_id]
 
 bot = WarBot()
 # endregion
