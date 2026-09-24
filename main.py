@@ -243,6 +243,69 @@ class WarBot(commands.Bot):
                                 {"_id": active_war_doc["_id"]},
                                 {"$set": {"home_score": home_score, "enemy_score": enemy_score}}
                             )
+                        attacks_data = data.get("attacks", {})
+                        if not hasattr(self, "processed_attacks"):
+                            self.processed_attacks = set()
+
+                        for attack_id, attack_info in attacks_data.items():
+                            if attack_id in self.processed_attacks:
+                                continue
+                                
+                            self.processed_attacks.add(attack_id)
+                            
+                            attacker_id = str(attack_info.get("attacker_id"))
+                            defender_id = str(attack_info.get("defender_id"))
+                            attacker_faction = str(attack_info.get("attacker_faction"))
+                            defender_faction = str(attack_info.get("defender_faction"))
+                            result = attack_info.get("result")
+                            respect = attack_info.get("respect_gain", 0.0)
+
+                            is_home_attacker = attacker_faction == my_faction_id
+                            is_enemy_attacker = attacker_faction == enemy_faction_id
+                            is_home_defender = defender_faction == my_faction_id
+                            is_enemy_defender = defender_faction == enemy_faction_id
+
+                            win_results = ["Hospitalized", "Mugged", "Arrested", "Special"]
+
+                            if is_home_attacker and is_enemy_defender:
+                                if result in win_results:
+                                    await self.profiles_col.update_one(
+                                        {"_id": f"{war_stamp}_{attacker_id}"},
+                                        {"$inc": {"attacks_won": 1, "rp_gained_inside": respect, "inside_hits": 1}}
+                                    )
+                                    await self.enemy_profiles_col.update_one(
+                                        {"_id": f"{war_stamp}_{defender_id}"},
+                                        {"$inc": {"defends_lost": 1, "rp_lost": respect}}
+                                    )
+                                elif result in ["Lost", "Stalemate", "Escape"]:
+                                    await self.profiles_col.update_one(
+                                        {"_id": f"{war_stamp}_{attacker_id}"},
+                                        {"$inc": {"attacks_lost": 1}}
+                                    )
+                                    await self.enemy_profiles_col.update_one(
+                                        {"_id": f"{war_stamp}_{defender_id}"},
+                                        {"$inc": {"defends_won": 1}}
+                                    )
+
+                            elif is_enemy_attacker and is_home_defender:
+                                if result in win_results:
+                                    await self.enemy_profiles_col.update_one(
+                                        {"_id": f"{war_stamp}_{attacker_id}"},
+                                        {"$inc": {"attacks_won": 1, "rp_gained_inside": respect, "inside_hits": 1}}
+                                    )
+                                    await self.profiles_col.update_one(
+                                        {"_id": f"{war_stamp}_{defender_id}"},
+                                        {"$inc": {"defends_lost": 1, "rp_lost": respect}}
+                                    )
+                                elif result in ["Lost", "Stalemate", "Escape"]:
+                                    await self.enemy_profiles_col.update_one(
+                                        {"_id": f"{war_stamp}_{attacker_id}"},
+                                        {"$inc": {"attacks_lost": 1}}
+                                    )
+                                    await self.profiles_col.update_one(
+                                        {"_id": f"{war_stamp}_{defender_id}"},
+                                        {"$inc": {"defends_won": 1}}
+                                    )
                         
                         await self.check_hospital_timers(data.get("members", {}), 1552388895872917554, id_mapping)
 
