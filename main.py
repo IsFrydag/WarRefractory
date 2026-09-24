@@ -1,4 +1,3 @@
-# region Imports and Global Variables
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -39,9 +38,7 @@ WAR_QUOTES = [
     '"Peace cannot be kept by force; it can only be achieved by understanding." ~ Albert Einstein',
     '"Wars may be fought with weapons, but they are won by men." ~ George S. Patton'
 ]
-# endregion
 
-# region Active War
 id_mapping = {
     '3390827': 470649318580158477,
     '4160283': 945029469775757412,
@@ -109,7 +106,6 @@ class WarBot(commands.Bot):
                         start_date = datetime.fromtimestamp(start_timestamp).strftime('%Y_%m_%d')
                         war_stamp = f"{enemy_name}_{start_date}"
 
-                        # Fetch enemy roster details FIRST
                         enemy_leader = "Unknown"
                         enemy_co = "Unknown"
                         enemy_members = {}
@@ -243,6 +239,7 @@ class WarBot(commands.Bot):
                                 {"_id": active_war_doc["_id"]},
                                 {"$set": {"home_score": home_score, "enemy_score": enemy_score}}
                             )
+                        
                         attacks_data = data.get("attacks", {})
                         if not hasattr(self, "processed_attacks"):
                             self.processed_attacks = set()
@@ -267,46 +264,70 @@ class WarBot(commands.Bot):
 
                             win_results = ["Hospitalized", "Mugged", "Arrested", "Special"]
 
-                            if is_home_attacker and is_enemy_defender:
-                                if result in win_results:
-                                    await self.profiles_col.update_one(
-                                        {"_id": f"{war_stamp}_{attacker_id}"},
-                                        {"$inc": {"attacks_won": 1, "rp_gained_inside": respect, "inside_hits": 1}}
-                                    )
-                                    await self.enemy_profiles_col.update_one(
-                                        {"_id": f"{war_stamp}_{defender_id}"},
-                                        {"$inc": {"defends_lost": 1, "rp_lost": respect}}
-                                    )
-                                elif result in ["Lost", "Stalemate", "Escape"]:
-                                    await self.profiles_col.update_one(
-                                        {"_id": f"{war_stamp}_{attacker_id}"},
-                                        {"$inc": {"attacks_lost": 1}}
-                                    )
-                                    await self.enemy_profiles_col.update_one(
-                                        {"_id": f"{war_stamp}_{defender_id}"},
-                                        {"$inc": {"defends_won": 1}}
-                                    )
+                            if is_home_attacker:
+                                if is_enemy_defender:
+                                    if result in win_results:
+                                        await self.profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{attacker_id}"},
+                                            {"$inc": {"attacks_won": 1, "rp_gained_inside": respect, "inside_hits": 1}}
+                                        )
+                                        await self.enemy_profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{defender_id}"},
+                                            {"$inc": {"defends_lost": 1, "rp_lost": respect}}
+                                        )
+                                    elif result in ["Lost", "Stalemate", "Escape"]:
+                                        await self.profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{attacker_id}"},
+                                            {"$inc": {"attacks_lost": 1}}
+                                        )
+                                        await self.enemy_profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{defender_id}"},
+                                            {"$inc": {"defends_won": 1}}
+                                        )
+                                else:
+                                    if result in win_results:
+                                        await self.profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{attacker_id}"},
+                                            {"$inc": {"attacks_won": 1, "rp_gained_outside": respect, "outside_hits": 1}}
+                                        )
+                                    elif result in ["Lost", "Stalemate", "Escape"]:
+                                        await self.profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{attacker_id}"},
+                                            {"$inc": {"attacks_lost": 1}}
+                                        )
 
-                            elif is_enemy_attacker and is_home_defender:
-                                if result in win_results:
-                                    await self.enemy_profiles_col.update_one(
-                                        {"_id": f"{war_stamp}_{attacker_id}"},
-                                        {"$inc": {"attacks_won": 1, "rp_gained_inside": respect, "inside_hits": 1}}
-                                    )
-                                    await self.profiles_col.update_one(
-                                        {"_id": f"{war_stamp}_{defender_id}"},
-                                        {"$inc": {"defends_lost": 1, "rp_lost": respect}}
-                                    )
-                                elif result in ["Lost", "Stalemate", "Escape"]:
-                                    await self.enemy_profiles_col.update_one(
-                                        {"_id": f"{war_stamp}_{attacker_id}"},
-                                        {"$inc": {"attacks_lost": 1}}
-                                    )
-                                    await self.profiles_col.update_one(
-                                        {"_id": f"{war_stamp}_{defender_id}"},
-                                        {"$inc": {"defends_won": 1}}
-                                    )
-                        
+                            elif is_enemy_attacker:
+                                if is_home_defender:
+                                    if result in win_results:
+                                        await self.enemy_profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{attacker_id}"},
+                                            {"$inc": {"attacks_won": 1, "rp_gained_inside": respect, "inside_hits": 1}}
+                                        )
+                                        await self.profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{defender_id}"},
+                                            {"$inc": {"defends_lost": 1, "rp_lost": respect}}
+                                        )
+                                    elif result in ["Lost", "Stalemate", "Escape"]:
+                                        await self.enemy_profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{attacker_id}"},
+                                            {"$inc": {"attacks_lost": 1}}
+                                        )
+                                        await self.profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{defender_id}"},
+                                            {"$inc": {"defends_won": 1}}
+                                        )
+                                else:
+                                    if result in win_results:
+                                        await self.enemy_profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{attacker_id}"},
+                                            {"$inc": {"attacks_won": 1, "rp_gained_outside": respect, "outside_hits": 1}}
+                                        )
+                                    elif result in ["Lost", "Stalemate", "Escape"]:
+                                        await self.enemy_profiles_col.update_one(
+                                            {"_id": f"{war_stamp}_{attacker_id}"},
+                                            {"$inc": {"attacks_lost": 1}}
+                                        )
+
                         await self.check_hospital_timers(data.get("members", {}), 1552388895872917554, id_mapping)
 
                     elif not ranked_wars and active_war_doc:
@@ -388,9 +409,7 @@ class WarBot(commands.Bot):
                     del self.hosp_notified[member_id]
 
 bot = WarBot()
-# endregion
 
-# region Archives
 class GenericBackView(discord.ui.View):
     def __init__(self, war_stamp):
         super().__init__(timeout=180)
@@ -579,9 +598,7 @@ class ArchiveSelectView(discord.ui.View):
     @discord.ui.button(label="Return", style=discord.ButtonStyle.danger, row=1)
     async def home_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="**The Grand Ledger**", view=MainDashboardView())
-# endregion
 
-# region Dashboard and Bot Commands
 class MainDashboardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None) 
@@ -631,4 +648,3 @@ async def help_command(interaction: discord.Interaction):
 
 keep_alive()
 bot.run(TOKEN)
-# endregion
