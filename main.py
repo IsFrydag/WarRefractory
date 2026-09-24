@@ -262,7 +262,7 @@ class WarBot(commands.Bot):
                             is_home_defender = defender_faction == my_faction_id
                             is_enemy_defender = defender_faction == enemy_faction_id
 
-                            win_results = ["Hospitalized", "Mugged", "Arrested", "Special"]
+                            win_results = ["Hospitalized", "Mugged", "Leave", "Assist", "Looted", "Arrested", "Special"]
 
                             if is_home_attacker:
                                 if is_enemy_defender:
@@ -278,7 +278,7 @@ class WarBot(commands.Bot):
                                     elif result in ["Lost", "Stalemate", "Escape"]:
                                         await self.profiles_col.update_one(
                                             {"_id": f"{war_stamp}_{attacker_id}"},
-                                            {"$inc": {"attacks_lost": 1}}
+                                            {"$inc": {"attacks_lost": 1, "inside_hits": 1}}
                                         )
                                         await self.enemy_profiles_col.update_one(
                                             {"_id": f"{war_stamp}_{defender_id}"},
@@ -293,7 +293,7 @@ class WarBot(commands.Bot):
                                     elif result in ["Lost", "Stalemate", "Escape"]:
                                         await self.profiles_col.update_one(
                                             {"_id": f"{war_stamp}_{attacker_id}"},
-                                            {"$inc": {"attacks_lost": 1}}
+                                            {"$inc": {"attacks_lost": 1, "outside_hits": 1}}
                                         )
 
                             elif is_enemy_attacker:
@@ -310,7 +310,7 @@ class WarBot(commands.Bot):
                                     elif result in ["Lost", "Stalemate", "Escape"]:
                                         await self.enemy_profiles_col.update_one(
                                             {"_id": f"{war_stamp}_{attacker_id}"},
-                                            {"$inc": {"attacks_lost": 1}}
+                                            {"$inc": {"attacks_lost": 1, "inside_hits": 1}}
                                         )
                                         await self.profiles_col.update_one(
                                             {"_id": f"{war_stamp}_{defender_id}"},
@@ -325,7 +325,7 @@ class WarBot(commands.Bot):
                                     elif result in ["Lost", "Stalemate", "Escape"]:
                                         await self.enemy_profiles_col.update_one(
                                             {"_id": f"{war_stamp}_{attacker_id}"},
-                                            {"$inc": {"attacks_lost": 1}}
+                                            {"$inc": {"attacks_lost": 1, "outside_hits": 1}}
                                         )
 
                         await self.check_hospital_timers(data.get("members", {}), 1552388895872917554, id_mapping)
