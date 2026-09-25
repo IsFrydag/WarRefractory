@@ -61,6 +61,7 @@ class WarBot(commands.Bot):
         self.profiles_col = self.db["War_Profiles"]
         self.archives_col = self.db["Historical_Wars"]
         self.archived_profiles_col = self.db["Historical_Profiles"]
+        self.hosp_bool_col = self.db["Hosp_Bool"]
         self.active_war_id = None
         
         self.enemy_profiles_col = self.db["Enemy_Profile"]
@@ -77,12 +78,17 @@ class WarBot(commands.Bot):
     @tasks.loop(seconds=60)
     async def war_manager_loop(self):
         async with aiohttp.ClientSession() as session:
+            active_war_doc = await self.war_col.find_one({"status": "active"})
+            last_timestamp = active_war_doc.get("last_attack_timestamp", 0) if active_war_doc else 0
+            
             url = f"https://api.torn.com/faction/?selections=basic,rankedwars,attacks&key={TORN_API_KEY}"
+            if last_timestamp > 0:
+                url = f"https://api.torn.com/faction/?selections=basic,rankedwars,attacks&from={last_timestamp}&key={TORN_API_KEY}"
+
             async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
                     
-                    active_war_doc = await self.war_col.find_one({"status": "active"})
                     ranked_wars = data.get("rankedwars", {})
                     
                     war_id = None
@@ -159,9 +165,12 @@ class WarBot(commands.Bot):
                                 "winner": None,
                                 "total_attacks": 0,
                                 "mvp": None,
-                                "caches_earned": []
+                                "caches_earned": [],
+                                "last_attack_timestamp": start_timestamp
                             }
                             await self.war_col.insert_one(war_memo)
+                            active_war_doc = war_memo
+                            last_timestamp = start_timestamp
 
                             home_faction_doc = {
                                 "_id": f"{war_stamp}_2",
@@ -244,12 +253,18 @@ class WarBot(commands.Bot):
                         if not hasattr(self, "processed_attacks"):
                             self.processed_attacks = set()
 
+                        max_ts = last_timestamp
+
                         for attack_id, attack_info in attacks_data.items():
                             if attack_id in self.processed_attacks:
                                 continue
                                 
                             self.processed_attacks.add(attack_id)
                             
+                            current_ts = attack_info.get("timestamp_ended", 0)
+                            if current_ts > max_ts:
+                                max_ts = current_ts
+
                             attacker_id = str(attack_info.get("attacker_id"))
                             defender_id = str(attack_info.get("defender_id"))
                             attacker_faction = str(attack_info.get("attacker_faction"))
@@ -328,7 +343,15 @@ class WarBot(commands.Bot):
                                             {"$inc": {"attacks_lost": 1, "outside_hits": 1}}
                                         )
 
-                        await self.check_hospital_timers(data.get("members", {}), 1552388895872917554, id_mapping)
+                        if active_war_doc and max_ts > last_timestamp:
+                            await self.war_col.update_one(
+                                {"_id": active_war_doc["_id"]},
+                                {"$set": {"last_attack_timestamp": max_ts + 1}}
+                            )
+
+                        hosp_doc = await self.hosp_bool_col.find_one({})
+                        if hosp_doc and hosp_doc.get("Bool") is True:
+                            await self.check_hospital_timers(data.get("members", {}), 1552388895872917554, id_mapping)
 
                     elif not ranked_wars and active_war_doc:
                         war_stamp = active_war_doc["_id"]
